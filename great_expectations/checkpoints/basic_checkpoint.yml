@@ -1,0 +1,13 @@
+name: basic_checkpoint
+config_version: 1.0
+class_name: Checkpoint
+validations:
+  - batch_request:
+      datasource_name: sample_datasource
+      data_connector_name: default_runtime_data_connector_name
+      data_asset_name: sample_rides
+      runtime_parameters:
+        path: data/sample_rides.json
+      batch_identifiers:
+        - default_identifier_name
+    expectation_suite_name: basic_suite

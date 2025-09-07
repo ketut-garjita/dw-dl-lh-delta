@@ -1,0 +1,11 @@
+nyc_taxi_profile:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: dbadmin
+      pass: dbpassword
+      dbname: dw
+      schema: analytics

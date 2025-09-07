@@ -1,0 +1,6 @@
+name: 'nyc_taxi'
+version: '1.0'
+config-version: 2
+profile: 'nyc_taxi_profile'
+model-paths: ['models']
+seed-paths: ['seeds']

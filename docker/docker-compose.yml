@@ -1,0 +1,76 @@
+version: "3.9"
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  mc-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: ["/bin/sh","-c"]
+    command: >-
+      "mc alias set local http://minio:9000 admin password123 &&
+       mc mb -p local/bronze || true &&
+       mc mb -p local/silver || true &&
+       mc mb -p local/gold || true"
+    volumes:
+      - ./minio/seed:/seed
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dbadmin
+      POSTGRES_PASSWORD: dbpassword
+      POSTGRES_DB: dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on: [zookeeper]
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  spark:
+    image: bitnami/spark:3.5
+    depends_on: [minio]
+    environment:
+      SPARK_MODE: master
+    ports:
+      - "7077:7077"
+      - "4040:4040"
+    volumes:
+      - ../spark_jobs:/opt/jobs
+      - ./docker/spark/jars:/opt/bitnami/spark/jars
+
+  trino:
+    image: trinodb/trino:443
+    depends_on: [minio]
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./trino/etc:/etc/trino
+
+volumes:
+  minio_data:
+  pgdata:
