@@ -1,7 +1,83 @@
-version: "3.9"
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3-python3.11
+  env_file:
+    - .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  volumes:
+    - ./airflow_dags:/opt/airflow/dags
+    - ./airflow_logs:/opt/airflow/logs
+    - ./airflow_plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
+  # ------------------------------
+  # Postgres (metadata DB for Airflow)
+  # ------------------------------
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      retries: 5
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+
+  # ------------------------------
+  # Airflow Init
+  # ------------------------------
+  airflow-init:
+    container_name: airflow-init
+    <<: *airflow-common
+    
+    entrypoint: >
+      bash -c "airflow db init &&
+               airflow users create
+               --username admin
+               --firstname admin
+               --lastname admin
+               --role Admin
+               --email admin@example.com
+               --password admin"
+    restart: on-failure
+
+  # ------------------------------
+  # Airflow Webserver
+  # ------------------------------
+  airflow-webserver:
+    container_name: airflow-webserver
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8082:8080"
+    restart: always
+
+  # ------------------------------
+  # Airflow Scheduler
+  # ------------------------------
+  airflow-scheduler:
+    container_name: airflow-scheduler
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+
+  # ------------------------------
+  # MinIO
+  # ------------------------------
   minio:
     image: minio/minio:latest
+    container_name: minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: admin
@@ -14,63 +90,126 @@ services:
 
   mc-init:
     image: minio/mc:latest
-    depends_on: [minio]
-    entrypoint: ["/bin/sh","-c"]
-    command: >-
-      "mc alias set local http://minio:9000 admin password123 &&
-       mc mb -p local/bronze || true &&
-       mc mb -p local/silver || true &&
-       mc mb -p local/gold || true"
-    volumes:
-      - ./minio/seed:/seed
+    depends_on:
+      - minio
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      mc alias set local http://minio:9000 admin password123 && \
+      mc mb -p local/bronze && \
+      mc mb -p local/silver && \
+      mc mb -p local/gold || true
 
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: dbadmin
-      POSTGRES_PASSWORD: dbpassword
-      POSTGRES_DB: dw
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d
-
+  # ------------------------------
+  # Zookeeper + Kafka
+  # ------------------------------
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
-    depends_on: [zookeeper]
+    container_name: kafka
+    depends_on:
+      - zookeeper
     environment:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
       - "9092:9092"
-
-  spark:
-    image: bitnami/spark:3.5
-    depends_on: [minio]
-    environment:
-      SPARK_MODE: master
+  
+  # AKHQ: Kafka topic monitoring tool
+  kafka-connect-ui:
+    image: tchiotludo/akhq
+    container_name: "AKHQ"
     ports:
-      - "7077:7077"
-      - "4040:4040"
-    volumes:
-      - ../spark_jobs:/opt/jobs
-      - ./docker/spark/jars:/opt/bitnami/spark/jars
+      - "8180:8080"
+    depends_on:
+      - kafka
+    environment:
+      MICRONAUT_SECURITY_ENABLED: "true"
+      MICRONAUT_SECURITY_TOKEN_JWT_ENABLED: "true"
+      MICRONAUT_SECURITY_TOKEN_JWT_SIGNATURES_SECRET_GENERATOR_SECRET: "my-super-secret"
+      MICRONAUT_SECURITY_BASIC_AUTH_USERS_0_USERNAME: "admin"
+      MICRONAUT_SECURITY_BASIC_AUTH_USERS_0_PASSWORD: "admin123"
+      MICRONAUT_SECURITY_BASIC_AUTH_USERS_0_ROLES_0: "admin"
+      AKHQ_CONFIGURATION: |
+        akhq:
+          server:
+            servlet:
+              context-path: /
+          connections:
+            redpanda:
+              properties:
+                bootstrap.servers: "kafka:9092"
+          security:
+            default-group: admin
 
+
+  # ------------------------------
+  # Spark Master & Worker
+  # ------------------------------
+  spark-master:
+    image: bitnami/spark:3.5.0
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_EXTRA_CLASSPATH=/opt/bitnami/spark/extra-jars/*
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark/extra-jars:/opt/bitnami/spark/extra-jars
+      - ./spark_jobs:/opt/spark_jobs
+
+  spark-worker-1:
+    image: bitnami/spark:3.5.0
+    container_name: spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_EXTRA_CLASSPATH=/opt/bitnami/spark/extra-jars/*
+    depends_on:
+      - spark-master
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./spark/extra-jars:/opt/bitnami/spark/extra-jars
+      - ./spark_jobs:/opt/spark_jobs
+
+  # ------------------------------
+  # Trino
+  # ------------------------------
   trino:
     image: trinodb/trino:443
-    depends_on: [minio]
+    container_name: trino
+    depends_on:
+      - minio
     ports:
-      - "8081:8080"
+      - "8083:8080"
     volumes:
       - ./trino/etc:/etc/trino
 
+  # ------------------------------
+  # PgAdmin
+  # ------------------------------
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: root
+    ports:
+      - "8085:80"
+
+# ------------------------------
+# Volumes
+# ------------------------------
 volumes:
   minio_data:
   pgdata:
+
