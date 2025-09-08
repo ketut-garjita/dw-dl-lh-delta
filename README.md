@@ -1,4 +1,4 @@
-# DW → Data Lake → Lakehouse Portfolio Project
+# Data Warehouse → Data Lake → Lakehouse Portfolio Project
 
 This repository is a runnable portfolio skeleton demonstrating:
 - Data Lake (MinIO), Lakehouse (Delta Lake), Data Warehouse (Postgres + dbt)
