@@ -1,9 +1,8 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os, json, pathlib
 from kafka import KafkaConsumer
-
 
 MINIO_URL = os.getenv("MINIO_URL","http://minio:9000")
 BUCKET = os.getenv("BRONZE_BUCKET","bronze")
@@ -21,13 +20,13 @@ def land_from_kafka(**ctx):
     value_deserializer=lambda v: json.loads(v.decode('utf-8')),
     auto_offset_reset='earliest', enable_auto_commit=True)
     outdir = pathlib.Path('/tmp/bronze'); outdir.mkdir(parents=True, exist_ok=True)
-    fname = outdir / f"rides_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+    fname = outdir / f"rides_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
     batch = []
-for _ in range(1000):
-    msg = next(consumer)
-    batch.append(msg.value)
-    fname.write_text("\n".join(json.dumps(x) for x in batch))
-    s3.upload_file(str(fname), BUCKET, f"rides/date={datetime.utcnow().date()}/{fname.name}")
+    for _ in range(1000):
+        msg = next(consumer)
+        batch.append(msg.value)
+        fname.write_text("\n".join(json.dumps(x) for x in batch))
+        s3.upload_file(str(fname), BUCKET, f"rides/date={datetime.now(timezone.utc).date()}/{fname.name}")
 
 
 with DAG(
@@ -37,4 +36,4 @@ with DAG(
     catchup=False,
     default_args={"retries":1, "retry_delay": timedelta(minutes=5)},
 ):
-PythonOperator(task_id="land_from_kafka", python_callable=land_from_kafka)
+    PythonOperator(task_id="land_from_kafka", python_callable=land_from_kafka)

@@ -2,11 +2,13 @@ import json, time, random, uuid, os
 from datetime import datetime, timedelta
 from kafka import KafkaProducer
 
-producer = KafkaProducer(bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP","localhost:9092"),
+producer = KafkaProducer(bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP","127.0.0.1:9092"),
                          value_serializer=lambda v: json.dumps(v).encode("utf-8"))
 
+from datetime import datetime, timedelta, timezone
+
 def fake_event():
-    now = datetime.utcnow() - timedelta(minutes=random.randint(0, 1440))
+    now = datetime.now(timezone.utc) - timedelta(minutes=random.randint(0, 1440))
     return {
         "ride_id": str(uuid.uuid4()),
         "pickup_ts": now.isoformat(),

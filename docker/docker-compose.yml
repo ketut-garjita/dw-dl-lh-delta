@@ -128,27 +128,18 @@ services:
       - "8180:8080"
     depends_on:
       - kafka
+    #volumes:
+    # - ./akhq/application.yml:/app/application.yml
     environment:
-      MICRONAUT_SECURITY_ENABLED: "true"
-      MICRONAUT_SECURITY_TOKEN_JWT_ENABLED: "true"
-      MICRONAUT_SECURITY_TOKEN_JWT_SIGNATURES_SECRET_GENERATOR_SECRET: "my-super-secret"
-      MICRONAUT_SECURITY_BASIC_AUTH_USERS_0_USERNAME: "admin"
-      MICRONAUT_SECURITY_BASIC_AUTH_USERS_0_PASSWORD: "admin123"
-      MICRONAUT_SECURITY_BASIC_AUTH_USERS_0_ROLES_0: "admin"
+      #KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       AKHQ_CONFIGURATION: |
         akhq:
-          server:
-            servlet:
-              context-path: /
           connections:
-            redpanda:
+            kafka:
               properties:
                 bootstrap.servers: "kafka:9092"
-          security:
-            default-group: admin
-
-
-  # ------------------------------
+            
+# ------------------------------
   # Spark Master & Worker
   # ------------------------------
   spark-master:

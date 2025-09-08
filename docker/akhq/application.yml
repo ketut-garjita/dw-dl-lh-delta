@@ -1,0 +1,7 @@
+akhq:
+  security:
+    default-group: admin
+    groups:
+      admin:
+        roles: [ "topic/read", "topic/insert", "topic/delete", "topic/config/update" ]
+        users: [ "admin" ]
